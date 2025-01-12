@@ -42,12 +42,12 @@ class PettingZooGenerals(pettingzoo.ParallelEnv):
 
     @functools.cache
     def observation_space(self, agent: AgentID) -> spaces.Space:
-        dims = self.environment.grid_dims
-        grid_multi_binary = spaces.MultiBinary(dims)
+        grid_dims = self.environment.grid.shape
+        grid_multi_binary = spaces.MultiBinary(grid_dims)
 
         return spaces.Dict(
             {
-                "armies": spaces.MultiDiscrete(np.ones(dims, dtype=int) * Environment.max_army_size),
+                "armies": spaces.MultiDiscrete(np.ones(grid_dims, dtype=int) * Environment.max_army_size),
                 "generals": grid_multi_binary,
                 "cities": grid_multi_binary,
                 "mountains": grid_multi_binary,
@@ -67,8 +67,8 @@ class PettingZooGenerals(pettingzoo.ParallelEnv):
 
     @functools.cache
     def action_space(self, agent: AgentID) -> spaces.Space:
-        dims = self.environment.grid_dims
-        return spaces.MultiDiscrete([2, dims[0], dims[1], 4, 2])
+        grid_height, grid_width = self.environment.grid.shape
+        return spaces.MultiDiscrete([2, grid_height, grid_width, 4, 2])
 
     def render(self):
         self.environment.render()
@@ -76,7 +76,7 @@ class PettingZooGenerals(pettingzoo.ParallelEnv):
     def reset(
         self, seed: int | None = None, options: dict | None = None
     ) -> tuple[dict[AgentID, Observation], dict[AgentID, dict]]:
-        observations, infos = self.environment.reset_from_petting_zoo(seed, options)
+        observations, infos = self.environment.reset(seed=seed, options=options)
         return observations, infos
 
     def step(

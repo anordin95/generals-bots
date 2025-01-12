@@ -2,8 +2,8 @@ from enum import Enum
 
 from pygame.time import Clock
 
-from generals.core.channels import Channels
 from generals.core.config import Dimension
+from generals.core.grid import Grid
 
 
 class GuiMode(Enum):
@@ -15,19 +15,17 @@ class GuiMode(Enum):
 class Properties:
     def __init__(
         self,
-        channels: Channels,
+        grid: Grid,
         agent_ids: list[str],
-        grid_dims: tuple[int, int],
         gui_mode: GuiMode,
         game_speed: float = 1.0,
         clock: Clock = Clock(),
         font_size: int = 18,
     ):
         # Given fields.
-        self.channels = channels
+        self.grid = grid
         self.agent_ids = agent_ids
-        self.grid_height = grid_dims[0]
-        self.grid_width = grid_dims[1]
+        self.grid_height, self.grid_width = self.grid.shape
         self.gui_mode = gui_mode
         self.game_speed = game_speed
         self.clock = clock

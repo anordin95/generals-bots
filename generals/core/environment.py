@@ -13,9 +13,8 @@ from generals.rewards.reward_fn import RewardFn
 from generals.rewards.win_lose_reward_fn import WinLoseRewardFn
 
 from .action import Action
-from .channels import Channels
 from .config import DIRECTIONS
-from .grid import Grid, GridFactory
+from .grid import NEUTRAL_ID, Grid, GridFactory
 from .observation import Observation
 
 
@@ -57,7 +56,7 @@ class Environment:
         pad_to: int = None,
     ):
         self.agent_ids = agent_ids
-        self.grid_factory = grid_factory if grid_factory is not None else GridFactory()
+        self.grid_factory = grid_factory if grid_factory is not None else GridFactory(agent_ids)
         self.truncation = truncation
         self.reward_fn = reward_fn if reward_fn is not None else WinLoseRewardFn()
         self.to_render = to_render
@@ -66,7 +65,7 @@ class Environment:
         self.pad_to = pad_to
 
         self.episode_num = 0
-        self._reset()
+        self.reset()
 
     def render(self):
         if self.to_render:
@@ -77,44 +76,8 @@ class Environment:
         if self.to_render:
             self.gui.close()
 
-    def reset_from_gymnasium(self, rng: np.random.Generator, options: dict[str, Any] = None):
-        """Reset this environment in accordance with Gymnasium's env-resetting expectations."""
-
-        if options is not None and "grid" in options:
-            grid = Grid(options["grid"])
-        else:
-            # Provide the np.random.Generator instance created in Env.reset()
-            # as opposed to creating a new one with the same seed.
-            self.grid_factory.set_rng(rng=rng)
-            grid = self.grid_factory.generate()
-
-        self._reset(grid, options)
-
-        observations = {agent_id: self.agent_observation(agent_id) for agent_id in self.agent_ids}
-        infos = {agent_id: self.get_infos()[agent_id] for agent_id in self.agent_ids}
-        return observations, infos
-
-    def reset_from_petting_zoo(self, seed: int = None, options: dict[str, Any] = None):
-        """Reset this environment in accordance with PettingZoo's env-resetting expectations."""
-
-        if options is not None and "grid" in options:
-            grid = Grid(options["grid"])
-        else:
-            # The pettingzoo.Parallel_Env's reset() notably differs
-            # from gymnasium.Env's reset() in that it does not create
-            # a random generator which should be re-used.
-            self.grid_factory.set_rng(rng=np.random.default_rng(seed))
-            grid = self.grid_factory.generate()
-
-        self._reset(grid, options)
-
-        observations = {agent_id: self.agent_observation(agent_id) for agent_id in self.agent_ids}
-        infos = {agent_id: self.get_infos()[agent_id] for agent_id in self.agent_ids}
-
-        return observations, infos
-
-    def _reset(self, grid: Grid = None, options: dict[str, Any] = None):
-        """_reset contains instructions common for resetting all types of envs."""
+    def reset(self, rng: np.random.Generator = None, seed: int = None, options: dict[str, Any] = None):
+        """reset contains instructions common for resetting all types of envs."""
 
         # Observations for each agent at the prior time-step.
         self.prior_observations: dict[str, Observation] = None
@@ -126,25 +89,27 @@ class Environment:
         # each agent may take per in-game unit of time.
         self.num_turns = 0
 
-        # Reset the grid & channels, i.e. the game-board.
-        if grid is None:
-            grid = self.grid_factory.generate()
-        self.channels = Channels(grid.grid, self.agent_ids)
-        self.grid_dims = (grid.grid.shape[0], grid.grid.shape[1])
-
-        general_positions = grid.get_generals_positions()
-        self.general_positions = {self.agent_ids[idx]: general_positions[idx] for idx in range(0, 2)}
+        # Reset the grid.
+        if options is not None and "grid_layout_str" in options:
+            self.grid = Grid.from_string(options["grid_layout_str"], self.agent_ids)
+        else:
+            self.grid = self.grid_factory.generate(rng=rng, seed=seed)
 
         # Reset the GUI for the upcoming game.
         if self.to_render:
-            self.gui = GUI(self.channels, self.agent_ids, self.grid_dims, GuiMode.TRAIN)
+            self.gui = GUI(self.grid, self.agent_ids, GuiMode.TRAIN)
 
         # Prepare a new replay to save the upcoming game.
         if self.save_replays:
-            self.replay = Replay(self.episode_num, grid, self.agent_ids)
-            self.replay.add_state(self.channels)
+            self.replay = Replay(self.episode_num, self.grid, self.agent_ids)
+            self.replay.add_state(self.grid)
 
         self.episode_num += 1
+
+        observations = {agent_id: self.agent_observation(agent_id) for agent_id in self.agent_ids}
+        infos = {agent_id: self.get_infos()[agent_id] for agent_id in self.agent_ids}
+
+        return observations, infos
 
     def step(
         self, actions: dict[str, Action]
@@ -154,55 +119,59 @@ class Environment:
         """
         done_before_actions = self.is_done()
         for agent in self.agents_in_order_of_prio:
-            pass_turn, si, sj, direction, split_army = actions[agent]
-
-            # Skip if agent wants to pass the turn
-            if pass_turn == 1:
+            to_pass, si, sj, direction, to_split = actions[agent]
+            if to_pass:
+                # Skip if agent wants to pass the turn
                 continue
-            if split_army == 1:  # Agent wants to split the army
-                army_to_move = self.channels.armies[si, sj] // 2
-            else:  # Leave just one army in the source cell
-                army_to_move = self.channels.armies[si, sj] - 1
-            if army_to_move < 1:  # Skip if army size to move is less than 1
+            if to_split:
+                # Agent wants to split the army
+                army_to_move = self.grid.armies[si, sj] // 2
+            else:
+                # Leave just one army in the source cell
+                army_to_move = self.grid.armies[si, sj] - 1
+
+            if army_to_move < 1:
+                # Skip if army size to move is less than 1
                 continue
 
             # Cap the amount of army to move (previous moves may have lowered available army)
-            army_to_move = min(army_to_move, self.channels.armies[si, sj] - 1)
-            army_to_stay = self.channels.armies[si, sj] - army_to_move
+            army_to_move = min(army_to_move, self.grid.armies[si, sj] - 1)
+            army_to_stay = self.grid.armies[si, sj] - army_to_move
 
             # Check if the current agent still owns the source cell and has more than 1 army
-            if self.channels.ownership[agent][si, sj] == 0 or army_to_move < 1:
+            if self.grid.owners[agent][si, sj] == 0 or army_to_move < 1:
                 continue
 
+            # Destination indices.
             di, dj = (
                 si + DIRECTIONS[direction].value[0],
                 sj + DIRECTIONS[direction].value[1],
-            )  # destination indices
+            )
 
-            # Skip if the destination cell is not passable or out of bounds
-            if di < 0 or di >= self.grid_dims[0] or dj < 0 or dj >= self.grid_dims[1]:
+            # Skip if the destination cell is a mountain or out of bounds.
+            if di < 0 or di >= self.grid.shape[0] or dj < 0 or dj >= self.grid.shape[1]:
                 continue
-            if self.channels.passable[di, dj] == 0:
+            if self.grid.mountains[di, dj] == 1:
                 continue
 
             # Figure out the target square owner and army size
-            target_square_army = self.channels.armies[di, dj]
+            target_square_army = self.grid.armies[di, dj]
             target_square_owner_idx = np.argmax(
-                [self.channels.ownership[agent][di, dj] for agent in ["neutral"] + self.agent_ids]
+                [self.grid.owners[agent][di, dj] for agent in ["neutral"] + self.agent_ids]
             )
             target_square_owner = (["neutral"] + self.agent_ids)[target_square_owner_idx]
             if target_square_owner == agent:
-                self.channels.armies[di, dj] += army_to_move
-                self.channels.armies[si, sj] = army_to_stay
+                self.grid.armies[di, dj] += army_to_move
+                self.grid.armies[si, sj] = army_to_stay
             else:
-                # Calculate resulting army, winner and update channels
+                # Calculate resulting army, winner and update grid.
                 remaining_army = np.abs(target_square_army - army_to_move)
                 square_winner = agent if target_square_army < army_to_move else target_square_owner
-                self.channels.armies[di, dj] = remaining_army
-                self.channels.armies[si, sj] = army_to_stay
-                self.channels.ownership[square_winner][di, dj] = True
+                self.grid.armies[di, dj] = remaining_army
+                self.grid.armies[si, sj] = army_to_stay
+                self.grid.owners[square_winner][di, dj] = True
                 if square_winner != target_square_owner:
-                    self.channels.ownership[target_square_owner][di, dj] = False
+                    self.grid.owners[target_square_owner][di, dj] = False
 
         # Swap agent order (because priority is alternating)
         self.agents_in_order_of_prio = self.agents_in_order_of_prio[::-1]
@@ -214,8 +183,8 @@ class Environment:
             # give all cells of loser to winner
             winner = self.agent_ids[0] if self.agent_won(self.agent_ids[0]) else self.agent_ids[1]
             loser = self.agent_ids[1] if winner == self.agent_ids[0] else self.agent_ids[0]
-            self.channels.ownership[winner] += self.channels.ownership[loser]
-            self.channels.ownership[loser] = np.full(self.grid_dims, False)
+            self.grid.owners[winner] += self.grid.owners[loser]
+            self.grid.owners[loser] = np.full(self.grid.shape, False)
         else:
             self._global_game_update()
 
@@ -244,7 +213,7 @@ class Environment:
             truncated = self.num_turns >= self.truncation
 
         if self.save_replays:
-            self.replay.add_state(self.channels)
+            self.replay.add_state(self.grid)
 
         if (terminated or truncated) and self.save_replays:
             self.replay.store()
@@ -263,13 +232,13 @@ class Environment:
         # every `increment_rate` steps, increase army size in each cell
         if self.num_turns % self.increment_rate == 0:
             for owner in owners:
-                self.channels.armies += self.channels.ownership[owner]
+                self.grid.armies += self.grid.owners[owner]
 
         # Increment armies on general and city cells, but only if they are owned by player
         if self.num_turns % 2 == 0 and self.num_turns > 0:
-            update_mask = self.channels.generals + self.channels.cities
+            update_mask = self.grid.generals + self.grid.cities
             for owner in owners:
-                self.channels.armies += update_mask * self.channels.ownership[owner]
+                self.grid.armies += (update_mask * self.grid.owners[owner]).astype(int)
 
     def is_done(self) -> bool:
         """
@@ -288,8 +257,8 @@ class Environment:
         """
         players_stats = {}
         for agent in self.agent_ids:
-            army_size = np.sum(self.channels.armies * self.channels.ownership[agent]).astype(int)
-            land_size = np.sum(self.channels.ownership[agent]).astype(int)
+            army_size = np.sum(self.grid.armies * self.grid.owners[agent]).astype(int)
+            land_size = np.sum(self.grid.owners[agent]).astype(int)
             players_stats[agent] = {
                 "army": army_size,
                 "land": land_size,
@@ -304,49 +273,35 @@ class Environment:
         """
         scores = {}
         for _agent in self.agent_ids:
-            army_size = np.sum(self.channels.armies * self.channels.ownership[_agent]).astype(int)
-            land_size = np.sum(self.channels.ownership[_agent]).astype(int)
+            army_size = np.sum(self.grid.armies * self.grid.owners[_agent]).astype(int)
+            land_size = np.sum(self.grid.owners[_agent]).astype(int)
             scores[_agent] = {
                 "army": army_size,
                 "land": land_size,
             }
 
-        visible = self.channels.get_visibility(agent)
-        invisible = 1 - visible
+        is_visible = self.grid.get_visibility(agent)
+        is_invisible = 1 - is_visible
 
-        opponent = self.agent_ids[0] if agent == self.agent_ids[1] else self.agent_ids[1]
+        opponent_id = self.agent_ids[0] if agent == self.agent_ids[1] else self.agent_ids[1]
+        structures_in_fog = is_invisible * (self.grid.mountains + self.grid.cities)
 
-        armies = self.channels.armies.astype(int) * visible
-        mountains = self.channels.mountains * visible
-        generals = self.channels.generals * visible
-        cities = self.channels.cities * visible
-        neutral_cells = self.channels.ownership_neutral * visible
-        owned_cells = self.channels.ownership[agent] * visible
-        opponent_cells = self.channels.ownership[opponent] * visible
-        structures_in_fog = invisible * (self.channels.mountains + self.channels.cities)
-        fog_cells = invisible - structures_in_fog
-        owned_land_count = scores[agent]["land"]
-        owned_army_count = scores[agent]["army"]
-        opponent_land_count = scores[opponent]["land"]
-        opponent_army_count = scores[opponent]["army"]
-        timestep = self.num_turns
-        priority = 1 if agent == self.agents_in_order_of_prio[0] else 0
         return Observation(
-            armies=armies,
-            generals=generals,
-            cities=cities,
-            mountains=mountains,
-            neutral_cells=neutral_cells,
-            owned_cells=owned_cells,
-            opponent_cells=opponent_cells,
-            fog_cells=fog_cells,
+            armies=(is_visible * self.grid.armies),
+            generals=(is_visible * self.grid.generals),
+            cities=(is_visible * self.grid.cities),
+            mountains=(is_visible * self.grid.mountains),
+            neutral_cells=(is_visible * self.grid.owners[NEUTRAL_ID]),
+            owned_cells=(is_visible * self.grid.owners[agent]),
+            opponent_cells=(is_visible * self.grid.owners[opponent_id]),
+            fog_cells=(is_invisible - structures_in_fog),
             structures_in_fog=structures_in_fog,
-            owned_land_count=owned_land_count,
-            owned_army_count=owned_army_count,
-            opponent_land_count=opponent_land_count,
-            opponent_army_count=opponent_army_count,
-            timestep=timestep,
-            priority=priority,
+            owned_land_count=scores[agent]["land"],
+            owned_army_count=scores[agent]["army"],
+            opponent_land_count=scores[opponent_id]["land"],
+            opponent_army_count=scores[opponent_id]["army"],
+            timestep=self.num_turns,
+            priority=1 if agent == self.agents_in_order_of_prio[0] else 0,
             pad_to=self.pad_to,
         )
 
@@ -354,9 +309,11 @@ class Environment:
         """
         Returns True if the agent won the game, False otherwise.
         """
-        return all(
-            self.channels.ownership[agent][general[0], general[1]] == 1 for general in self.general_positions.values()
-        )
+
+        num_generals_owned_by_agent = (self.grid.generals * self.grid.owners[agent]).sum()
+        num_generals = self.grid.generals.sum()
+
+        return num_generals == num_generals_owned_by_agent
 
 
 class Replay:
@@ -370,9 +327,9 @@ class Replay:
         self.grid = grid
         self.agent_ids = agent_ids
 
-        self.game_states: list[Channels] = []
+        self.game_states: list[Grid] = []
 
-    def add_state(self, state: Channels):
+    def add_state(self, state: Grid):
         copied_state = copy.deepcopy(state)
         self.game_states.append(copied_state)
 
@@ -388,37 +345,47 @@ class Replay:
             return pickle.load(f)
 
     def play(self):
-        agents = [agent for agent in self.agent_ids]
-        game = Environment(self.grid, agents)
-        gui = GUI(game.channels, agents, game.grid_dims, gui_mode=GuiMode.REPLAY)
-        gui_properties = gui.properties
+        env = Environment(self.agent_ids)
+        # Manually set the grid.
+        env.grid = copy.deepcopy(self.game_states[0])
+        gui = GUI(env.grid, self.agent_ids, gui_mode=GuiMode.REPLAY)
+        desired_turn_num, last_input_time, last_move_time = 0, 0, 0
+        total_num_turns = len(self.game_states) - 1
 
-        game_step, last_input_time, last_move_time = 0, 0, 0
         while True:
-            _t = time.time()
+            current_time = time.time()
 
-            # Check inputs
-            if _t - last_input_time > 0.008:  # check for input every 8ms
+            # Check for any commands every 8ms.
+            if current_time - last_input_time > 8e-3:
                 command = gui.tick()
-                last_input_time = _t
+                last_input_time = current_time
             else:
                 command = ReplayCommand()
 
             if command.restart:
-                game_step = 0
+                desired_turn_num = 0
 
-            # If we control replay, change game state
-            game_step = max(0, min(len(self.game_states) - 1, game_step + command.frame_change))
-            if gui_properties.paused and game_step != game.num_turns:
-                game.channels = copy.deepcopy(self.game_states[game_step])
-                game.num_turns = game_step
-                last_move_time = _t
-            # If we are not paused, play the game
-            elif _t - last_move_time > (1 / gui_properties.game_speed) * 0.512 and not gui_properties.paused:
-                if game.is_done():
-                    gui_properties.paused = True
-                game_step = min(len(self.game_states) - 1, game_step + 1)
-                game.channels = copy.deepcopy(self.game_states[game_step])
-                game.num_turns = game_step
-                last_move_time = _t
-            gui_properties.clock.tick(60)
+            desired_turn_num += command.frame_change
+            # Ensure 0 <= current-turn-num <= total_num_turns.
+            desired_turn_num = max(min(desired_turn_num, total_num_turns), 0)
+
+            # If the replay is paused and a specific turn-number has been requested, go to it.
+            if gui.properties.is_paused and desired_turn_num != env.num_turns:
+                env.grid = copy.deepcopy(self.game_states[desired_turn_num])
+                env.num_turns = desired_turn_num
+                last_move_time = current_time
+            # Otherwise, replay through the game normally.
+            elif (
+                current_time - last_move_time > (1 / gui.properties.game_speed) * 0.512 and not gui.properties.is_paused
+            ):
+                desired_turn_num += 1
+
+                is_replay_done = env.is_done() or desired_turn_num >= total_num_turns
+                if is_replay_done:
+                    gui.properties.is_paused = True
+
+                env.grid = copy.deepcopy(self.game_states[desired_turn_num])
+                env.num_turns = desired_turn_num
+                last_move_time = current_time
+
+            gui.properties.clock.tick(60)

@@ -48,21 +48,24 @@ class GymnasiumGenerals(gym.Env):
     ) -> tuple[Observation, dict[str, Any]]:
         # Reset the parent Gymnasium.env first.
         super().reset(seed=seed)
+
         # Provide the np.random.Generator instance created in Env.reset()
         # as opposed to creating a new one with the same seed.
-        _obs, _infos = self.environment.reset_from_gymnasium(rng=self.np_random, options=options)
-        _rewards = {agent: 0 for agent in self.agent_ids}
-        obs = self.flatten_obs(_obs)
-        infos = self.flatten_infos(_obs, _infos, _rewards)
-        return obs, infos
+        obs, infos = self.environment.reset(rng=self.np_random, options=options)
+
+        rewards = {agent: 0 for agent in self.agent_ids}
+        flat_obs = self.flatten_obs(obs)
+        flat_infos = self.flatten_infos(obs, infos, rewards)
+
+        return flat_obs, flat_infos
 
     def step(self, flat_actions: np.ndarray) -> tuple[Any, Any, bool, bool, dict[str, Any]]:
         actions = self.deflate_actions(flat_actions)
-        _obs, _rewards, terminated, truncated, _infos = self.environment.step(actions)
+        obs, rewards, terminated, truncated, infos = self.environment.step(actions)
 
-        obs = self.flatten_obs(_obs)
-        infos = self.flatten_infos(_obs, _infos, _rewards)
-        return obs, 0, terminated, truncated, infos
+        flat_obs = self.flatten_obs(obs)
+        flat_infos = self.flatten_infos(obs, infos, rewards)
+        return flat_obs, 0, terminated, truncated, flat_infos
 
     def deflate_actions(self, action: np.ndarray) -> dict[str, Action]:
         return {agent: Action(*action[i]) for i, agent in enumerate(self.agent_ids)}

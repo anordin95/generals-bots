@@ -4,6 +4,7 @@ import numpy as np
 import pygame
 
 from generals.core.config import Dimension, Path
+from generals.core.grid import NEUTRAL_ID
 from generals.gui.properties import GuiMode, Properties
 
 Color: TypeAlias = tuple[int, int, int]
@@ -168,10 +169,10 @@ class Renderer:
         owned_map = np.zeros((self.properties.grid_height, self.properties.grid_width), dtype=bool)
         visible_map = np.zeros((self.properties.grid_height, self.properties.grid_width), dtype=bool)
         for agent in agents:
-            ownership = self.properties.channels.ownership[agent]
+            ownership = self.properties.grid.owners[agent]
             owned_map = np.logical_or(owned_map, ownership)
             if self.properties.agent_fov[agent]:
-                visibility = self.properties.channels.get_visibility(agent)
+                visibility = self.properties.grid.get_visibility(agent)
                 visible_map = np.logical_or(visible_map, visibility)
 
         # Helper maps for not owned and invisible cells
@@ -180,12 +181,12 @@ class Renderer:
 
         # Draw background of visible owned squares
         for agent in agents:
-            ownership = self.properties.channels.ownership[agent]
+            ownership = self.properties.grid.owners[agent]
             visible_ownership = np.logical_and(ownership, visible_map)
             self.draw_channel(visible_ownership, self.properties.agent_id_to_color[agent])
 
         # Draw visible generals
-        visible_generals = np.logical_and(self.properties.channels.generals, visible_map)
+        visible_generals = np.logical_and(self.properties.grid.generals, visible_map)
         self.draw_images(visible_generals, self._general_img)
 
         # Draw background of visible but not owned squares
@@ -196,26 +197,26 @@ class Renderer:
         self.draw_channel(invisible_map, FOG_OF_WAR)
 
         # Draw background of visible mountains
-        visible_mountain = np.logical_and(self.properties.channels.mountains, visible_map)
+        visible_mountain = np.logical_and(self.properties.grid.mountains, visible_map)
         self.draw_channel(visible_mountain, VISIBLE_MOUNTAIN)
 
         # Draw mountains (even if they are not visible)
-        self.draw_images(self.properties.channels.mountains, self._mountain_img)
+        self.draw_images(self.properties.grid.mountains, self._mountain_img)
 
         # Draw background of visible neutral cities
-        visible_cities = np.logical_and(self.properties.channels.cities, visible_map)
-        visible_cities_neutral = np.logical_and(visible_cities, self.properties.channels.ownership_neutral)
+        visible_cities = np.logical_and(self.properties.grid.cities, visible_map)
+        visible_cities_neutral = np.logical_and(visible_cities, self.properties.grid.owners[NEUTRAL_ID])
         self.draw_channel(visible_cities_neutral, NEUTRAL_CASTLE)
 
         # Draw invisible cities as mountains
-        invisible_cities = np.logical_and(self.properties.channels.cities, invisible_map)
+        invisible_cities = np.logical_and(self.properties.grid.cities, invisible_map)
         self.draw_images(invisible_cities, self._mountain_img)
 
         # Draw visible cities
         self.draw_images(visible_cities, self._city_img)
 
         # Draw nonzero army counts on visible squares
-        visible_army = self.properties.channels.armies * visible_map
+        visible_army = self.properties.grid.armies * visible_map
         visible_army_indices = self.channel_to_indices(visible_army)
         for i, j in visible_army_indices:
             self.render_cell_text(

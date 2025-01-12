@@ -95,7 +95,10 @@ grid with these properties for each run.
 from generals.envs import PettingZooGenerals
 from generals import GridFactory
 
+agents = [...]
+
 grid_factory = GridFactory(
+    agent_ids=[agent.id for agent in agents],
     min_grid_dims=(10, 10),                # Grid height and width are randomly selected
     max_grid_dims=(15, 15),
     mountain_density=0.2,                  # Probability of a mountain in a cell
@@ -109,30 +112,29 @@ env = PettingZooGenerals(
     ...
 )
 ```
-You can also specify grids manually, as a string via `options` dict:
+You can also specify grids manually, as a string via the `options` dict:
 ```python
 from generals.envs import PettingZooGenerals
 
 env = PettingZooGenerals(agent_ids=[agent1.id, agent2.id])
 
-grid = """
-.3.#
-#..A
+grid_layout_str = """
+.c.#
+#..G
 #..#
-.#.B
+.#cG
 """
 
-options = {"grid": grid}
+options = {"grid_layout_str": grid_layout_str}
 
 # Pass the new grid to the environment (for the next game)
 env.reset(options=options)
 ```
 Grids are created using a string format where:
-- `.` represents passable terrain
-- `#` indicates impassable mountains
-- `A, B` mark the positions of generals
-- numbers `0-9` and `x`, where `x=10`, represent cities, where the number specifies amount of neutral army in the city,
-  which is calculated as `40 + number`. The reason for `x=10` is that the official game has cities in range `[40, 50]`
+- `.` marks empty or neutral land
+- `#` marks impassable mountains
+- `G` marks the positions of generals
+- `c` marks the positions of cities
 
 > [!TIP]
 > Check out [complete example](./examples/complete_example.py) for concrete example in the wild!
@@ -198,7 +200,7 @@ Actions are lists of 5 values `[pass, cell_i, cell_j, direction, split]`, where
 - `direction` indicates whether you want to move `0 (up)`, `1 (down)`, `2 (left)`, or `3 (right)`
 - `split` indicates whether you want to `1 (split)` units and send only half, or `0 (no split)` where you send all units to the next cell
 
-A convenience function `compute_valid_action_mask` is also provided for detailing the set of legal moves an agent can make based on its `observation`. The `valid_action_mask` is a 3D array with shape `(N, M, 4)`, where each element corresponds to whether a move is valid from cell
+A convenience function `compute_valid_move_mask` is also provided for detailing the set of legal moves an agent can make based on its `observation`. The `valid_move_mask` is a 3D array with shape `(N, M, 4)`, where each element corresponds to whether a move is valid from cell
 `[i, j]` in one of four directions: `0 (up)`, `1 (down)`, `2 (left)`, or `3 (right)`.
 
 > [!TIP]

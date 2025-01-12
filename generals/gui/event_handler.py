@@ -107,7 +107,7 @@ class EventHandler(ABC):
         )
 
     def toggle_player_fov(self):
-        agents = self.properties.game.agents
+        agents = self.properties.agent_ids
         agent_fov = self.properties.agent_fov
 
         x, y = pygame.mouse.get_pos()

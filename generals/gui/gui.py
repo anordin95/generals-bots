@@ -2,7 +2,7 @@ from typing import Any
 
 import pygame
 
-from generals.core.channels import Channels
+from generals.core.grid import Grid
 
 from .event_handler import (
     Command,
@@ -16,18 +16,16 @@ from .rendering import Renderer
 class GUI:
     def __init__(
         self,
-        channels: Channels,
+        grid: Grid,
         agent_ids: list[str],
-        grid_dims: tuple[int, int],
         gui_mode: GuiMode = GuiMode.TRAIN,
-        speed_multiplier: float = 1.0,
     ):
         pygame.init()
         pygame.display.set_caption("Generals")
         # Handle key repeats
         pygame.key.set_repeat(500, 64)
 
-        self.properties = Properties(channels, agent_ids, grid_dims, gui_mode)
+        self.properties = Properties(grid, agent_ids, gui_mode)
         self.renderer = Renderer(self.properties)
         self.event_handler = EventHandler.from_mode(self.properties.gui_mode, self.properties)
 
