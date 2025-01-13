@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 
-from generals.core.game import Action, Observation
+from generals.core.action import Action
+from generals.core.observation import Observation
 
 
 class Agent(ABC):
@@ -8,9 +9,8 @@ class Agent(ABC):
     Base class for all agents.
     """
 
-    def __init__(self, id: str = "NPC", color: tuple[int, int, int] = (67, 70, 86)):
+    def __init__(self, id: str = "NPC"):
         self.id = id
-        self.color = color
 
     @abstractmethod
     def act(self, observation: Observation) -> Action:

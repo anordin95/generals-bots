@@ -46,29 +46,41 @@ pip install -e .
 ## 🌱 Getting Started
 Creating an agent is very simple. Start by subclassing an `Agent` class just like
 [`RandomAgent`](./generals/agents/random_agent.py) or [`ExpanderAgent`](./generals/agents/expander_agent.py).
-You can specify your agent `id` (name) and `color` and the only thing remaining is to implement the `act` function,
+You can specify your agent `id` (name) and the only thing remaining is to implement the `act` function,
 that has the signature explained in sections down below.
 
 
-### Usage Example (🤸 Gymnasium)
+### Usage Example (🦁 PettingZoo)
 The example loop for running the game looks like this
-```python:examples/gymnasium_example.py
-import gymnasium as gym
-
+```python:examples/pettingzoo_example.py
 from generals.agents import RandomAgent, ExpanderAgent
+from generals.envs import PettingZooGenerals
 
 # Initialize agents
-agent = RandomAgent()
-npc = ExpanderAgent()
+random = RandomAgent()
+expander = ExpanderAgent()
+
+# Names are used for the environment
+agent_names = [random.id, expander.id]
+
+# Store agents in a dictionary
+agents = {
+    random.id: random,
+    expander.id: expander
+}
 
 # Create environment
-env = gym.make("gym-generals-v0", agent=agent, npc=npc, render_mode="human")
+env = PettingZooGenerals(agent_ids=agent_names, to_render=True)
+observations, info = env.reset()
 
-observation, info = env.reset()
-terminated = truncated = False
-while not (terminated or truncated):
-    action = agent.act(observation)
-    observation, reward, terminated, truncated, info = env.step(action)
+done = False
+while not done:
+    actions = {}
+    for agent in env.agent_ids:
+        actions[agent] = agents[agent].act(observations[agent])
+    # All agents perform their actions
+    observations, rewards, terminated, truncated, info = env.step(actions)
+    done = terminated or truncated
     env.render()
 
 ```
@@ -80,10 +92,13 @@ while not (terminated or truncated):
 Grids on which the game is played on are generated via `GridFactory`. You can instantiate the class with desired grid properties, and it will generate
 grid with these properties for each run.
 ```python
-import gymnasium as gym
+from generals.envs import PettingZooGenerals
 from generals import GridFactory
 
+agents = [...]
+
 grid_factory = GridFactory(
+    agent_ids=[agent.id for agent in agents],
     min_grid_dims=(10, 10),                # Grid height and width are randomly selected
     max_grid_dims=(15, 15),
     mountain_density=0.2,                  # Probability of a mountain in a cell
@@ -92,43 +107,43 @@ grid_factory = GridFactory(
 )
 
 # Create environment
-env = gym.make(
-    "gym-generals-v0",
+env = PettingZooGenerals(
     grid_factory=grid_factory,
     ...
 )
 ```
-You can also specify grids manually, as a string via `options` dict:
+You can also specify grids manually, as a string via the `options` dict:
 ```python
-import gymnasium as gym
+from generals.envs import PettingZooGenerals
 
-env = gym.make("gym-generals-v0", ...)
-grid = """
-.3.#
-#..A
+env = PettingZooGenerals(agent_ids=[agent1.id, agent2.id])
+
+grid_layout_str = """
+.c.#
+#..G
 #..#
-.#.B
+.#cG
 """
 
-options = {"grid": grid}
+options = {"grid_layout_str": grid_layout_str}
 
 # Pass the new grid to the environment (for the next game)
 env.reset(options=options)
 ```
 Grids are created using a string format where:
-- `.` represents passable terrain
-- `#` indicates impassable mountains
-- `A, B` mark the positions of generals
-- numbers `0-9` and `x`, where `x=10`, represent cities, where the number specifies amount of neutral army in the city,
-  which is calculated as `40 + number`. The reason for `x=10` is that the official game has cities in range `[40, 50]`
+- `.` marks empty or neutral land
+- `#` marks impassable mountains
+- `G` marks the positions of generals
+- `c` marks the positions of cities
+
+> [!TIP]
+> Check out [complete example](./examples/complete_example.py) for concrete example in the wild!
 
 ## 🔬 Interactive Replays
 We can store replays and then analyze them in an interactive fashion. `Replay` class handles replay related functionality.
 ### Storing a replay
 ```python
-import gymnasium as gym
-
-env = gym.make("gym-generals-v0", ...)
+env = ...
 
 options = {"replay_file": "my_replay"}
 env.reset(options=options) # The next game will be encoded in my_replay.pkl
@@ -185,7 +200,7 @@ Actions are lists of 5 values `[pass, cell_i, cell_j, direction, split]`, where
 - `direction` indicates whether you want to move `0 (up)`, `1 (down)`, `2 (left)`, or `3 (right)`
 - `split` indicates whether you want to `1 (split)` units and send only half, or `0 (no split)` where you send all units to the next cell
 
-A convenience function `compute_valid_action_mask` is also provided for detailing the set of legal moves an agent can make based on its `observation`. The `valid_action_mask` is a 3D array with shape `(N, M, 4)`, where each element corresponds to whether a move is valid from cell
+A convenience function `compute_valid_move_mask` is also provided for detailing the set of legal moves an agent can make based on its `observation`. The `valid_move_mask` is a 3D array with shape `(N, M, 4)`, where each element corresponds to whether a move is valid from cell
 `[i, j]` in one of four directions: `0 (up)`, `1 (down)`, `2 (left)`, or `3 (right)`.
 
 > [!TIP]
@@ -196,14 +211,19 @@ A convenience function `compute_valid_action_mask` is also provided for detailin
 > ```
 
 ### 🎁 Reward
-It is possible to implement custom reward function. The default reward is awarded only at the end of a game
-and gives `1` for winner and `-1` for loser, otherwise `0`.
-```python
-def custom_reward_fn(observation, action, done, info):
-    # Give agent a reward based on the number of cells they own
-    return observation["owned_land_count"]
+It is possible to implement your own custom reward function. The default reward function for the environments is one that awards only at the end of a game and gives `1` for winning or `-1` for losing.
 
-env = gym.make(..., reward_fn=custom_reward_fn)
+There's another provided reward function available: FrequentAssetRewardFn. It provides frequent rewards (i.e. most turns will see a non-zero reward) based on the change in assets, i.e. land, army, cities.
+
+```python
+from generals.rewards.reward_fn import RewardFn
+
+class ConstantRewardFn(RewardFn):
+    def __call__(self, prior_obs: Observation, prior_action: Action, obs: Observation) -> float:
+        # Note: this would be a bad reward function!
+        return 42.0
+
+env = gym.make(..., reward_fn=ConstantRewardFn())
 observations, info = env.reset()
 ```
 
@@ -212,17 +232,21 @@ Complementary to local development, it is possible to run agents online against 
 We use `socketio` for communication, and you can either use our `autopilot` to run agent in a specified lobby indefinitely,
 or create your own connection workflow. Our implementations expect that your agent inherits from the `Agent` class, and has
 implemented the required methods.
-```python
+```python:examples/client_example.py
 from generals.remote import autopilot
+from generals.agents import ExpanderAgent
+
 import argparse
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--user_id", type=str, default=...) # Register yourself at generals.io and use this id
-parser.add_argument("--lobby_id", type=str, default=...) # The last part of the lobby url
-parser.add_argument("--agent_id", type=str, default="Expander") # agent_id should be "registered" in AgentFactory
+parser.add_argument("--lobby_id", type=str, default="psyo") # After you create a private lobby, copy last part of the url
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    autopilot(args.agent_id, args.user_id, args.lobby_id)
+    agent = ExpanderAgent()
+    autopilot(agent, args.user_id, args.lobby_id)
+
 ```
 This script will run `ExpanderAgent` in the specified lobby.
 ## 🙌 Contributing

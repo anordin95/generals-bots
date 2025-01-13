@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.5.0](https://github.com/strakam/generals-bots/compare/v2.4.0...v2.5.0) (2024-12-31)
+
+
+### 🚀 Features
+
+* Add a clearer action repr to aid debugging. ([0621905](https://github.com/strakam/generals-bots/commit/062190514b76518c77b0da08bb6f597d646c9de3))
+* Flesh out rewards with a base class & add a new reward fn: FrequentAssetRewardFn. ([60ba3e0](https://github.com/strakam/generals-bots/commit/60ba3e0f713253abed4ac97f45a7f40fc91f6d3b))
+
+
+### 🐛 Bug Fixes
+
+* Make short sleep between requests when playing online, preventing temporary bans ([f139efb](https://github.com/strakam/generals-bots/commit/f139efb62d2a948729dc63a21a9c9db0b0c6bc7d))
+
+## [2.4.0](https://github.com/strakam/generals-bots/compare/v2.3.0...v2.4.0) (2024-12-27)
+
+
+### 🚀 Features
+
+* Info dict from the environment now contains whether game is done and who won ([0d8990b](https://github.com/strakam/generals-bots/commit/0d8990b45a6e2f6aa2615a1dd99b1ed8b9810916))
+
+
+### 🛠️ Refactor
+
+* action to a subclass of ndarray for a clearer interface and consistent repr. ([ba73902](https://github.com/strakam/generals-bots/commit/ba73902a1b06e90b231ee7dc1a1d738d3c8f17de))
+* observation & action for clarity ([ddb1a88](https://github.com/strakam/generals-bots/commit/ddb1a88ab44f8d2e3dac50123546b9a128175e26))
+
 ## [2.3.0](https://github.com/strakam/generals-bots/compare/v2.2.1...v2.3.0) (2024-12-23)
 
 

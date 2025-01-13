@@ -1,140 +1,96 @@
-from collections.abc import Callable
-from copy import deepcopy
-from typing import Any, SupportsFloat, TypeAlias
+# type: ignore
+from typing import Any
 
 import gymnasium as gym
+import numpy as np
+from gymnasium import spaces
 
-from generals.agents import Agent, AgentFactory
-from generals.core.game import Action, Game, Info
-from generals.core.grid import Grid, GridFactory
+from generals.core.action import Action, compute_valid_move_mask
+from generals.core.environment import Environment
+from generals.core.grid import GridFactory
 from generals.core.observation import Observation
-from generals.core.replay import Replay
-from generals.gui import GUI
-from generals.gui.properties import GuiMode
-
-Reward: TypeAlias = float
-RewardFn: TypeAlias = Callable[[Observation, Action, bool, Info], Reward]
+from generals.rewards.reward_fn import RewardFn
 
 
 class GymnasiumGenerals(gym.Env):
-    metadata = {
-        "render_modes": ["human"],
-        "render_fps": 6,
-    }
+    """ """
 
     def __init__(
         self,
-        grid_factory: GridFactory | None = None,
-        npc: Agent | None = None,
-        agent: Agent | None = None,  # Optional, just to obtain id and color
-        truncation: int | None = None,
-        reward_fn: RewardFn | None = None,
-        render_mode: str | None = None,
+        agent_ids: list[str],
+        grid_factory: GridFactory = None,
+        truncation: int = None,
+        reward_fn: RewardFn = None,
+        to_render: bool = False,
+        speed_multiplier: float = 1.0,
+        save_replays: bool = False,
+        pad_to: int = 24,
     ):
-        self.render_mode = render_mode
-        self.grid_factory = grid_factory if grid_factory is not None else GridFactory()
-        self.reward_fn = reward_fn if reward_fn is not None else GymnasiumGenerals._default_reward
+        self.agent_ids = agent_ids
+        self.environment = Environment(
+            agent_ids, grid_factory, truncation, reward_fn, to_render, speed_multiplier, save_replays, pad_to
+        )
+        self.pad_to = pad_to
+        self.observation_space = self.set_observation_space()
+        self.action_space = self.set_action_space()
 
-        # Agents
-        if npc is None:
-            print('No NPC agent provided. Creating "Random" NPC as a fallback.')
-            npc = AgentFactory.make_agent("random")
-        else:
-            assert isinstance(npc, Agent), "NPC must be an instance of Agent class."
-        self.npc = npc
-        self.agent_id = "Agent" if agent is None else agent.id
-        self.agent_ids = [self.agent_id, self.npc.id]
-        self.agent_data = {
-            self.agent_id: {"color": (67, 70, 86) if agent is None else agent.color},
-            self.npc.id: {"color": self.npc.color},
-        }
-        assert self.agent_id != npc.id, "Agent ids must be unique - you can pass custom ids to agent constructors."
+    def set_observation_space(self) -> spaces.Space:
+        return spaces.Box(low=0, high=2**31 - 1, shape=(2, 15, self.pad_to, self.pad_to), dtype=np.float32)
 
-        # Game
-        grid = self.grid_factory.generate()
-        self.game = Game(grid, [self.agent_id, self.npc.id])
-        self.observation_space = self.game.observation_space
-        self.action_space = self.game.action_space
-        self.truncation = truncation
+    def set_action_space(self) -> spaces.Space:
+        return spaces.MultiDiscrete([2, self.pad_to, self.pad_to, 4, 2])
 
     def render(self):
-        if self.render_mode == "human":
-            _ = self.gui.tick(fps=self.metadata["render_fps"])
+        self.environment.render()
 
     def reset(
         self, seed: int | None = None, options: dict[str, Any] | None = None
     ) -> tuple[Observation, dict[str, Any]]:
+        # Reset the parent Gymnasium.env first.
         super().reset(seed=seed)
-        if options is None:
-            options = {}
 
-        if "grid" in options:
-            grid = Grid(options["grid"])
-        else:
-            # Provide the np.random.Generator instance created in Env.reset()
-            # as opposed to creating a new one with the same seed.
-            self.grid_factory.set_rng(rng=self.np_random)
-            grid = self.grid_factory.generate()
+        # Provide the np.random.Generator instance created in Env.reset()
+        # as opposed to creating a new one with the same seed.
+        obs, infos = self.environment.reset(rng=self.np_random, options=options)
 
-        # Create game for current run
-        self.game = Game(grid, self.agent_ids)
+        rewards = {agent: 0 for agent in self.agent_ids}
+        flat_obs = self.flatten_obs(obs)
+        flat_infos = self.flatten_infos(obs, infos, rewards)
 
-        # Create GUI for current render run
-        if self.render_mode == "human":
-            self.gui = GUI(self.game, self.agent_data, GuiMode.TRAIN)
+        return flat_obs, flat_infos
 
-        if "replay_file" in options:
-            self.replay = Replay(
-                name=options["replay_file"],
-                grid=grid,
-                agent_data=self.agent_data,
-            )
-            self.replay.add_state(deepcopy(self.game.channels))
-        elif hasattr(self, "replay"):
-            del self.replay
+    def step(self, flat_actions: np.ndarray) -> tuple[Any, Any, bool, bool, dict[str, Any]]:
+        actions = self.deflate_actions(flat_actions)
+        obs, rewards, terminated, truncated, infos = self.environment.step(actions)
 
-        self.observation_space = self.game.observation_space
-        self.action_space = self.game.action_space
+        flat_obs = self.flatten_obs(obs)
+        flat_infos = self.flatten_infos(obs, infos, rewards)
+        return flat_obs, 0, terminated, truncated, flat_infos
 
-        observation = self.game.agent_observation(self.agent_id)
-        info: dict[str, Any] = {}
-        return observation, info
+    def deflate_actions(self, action: np.ndarray) -> dict[str, Action]:
+        return {agent: Action(*action[i]) for i, agent in enumerate(self.agent_ids)}
 
-    def step(self, action: Action) -> tuple[Observation, SupportsFloat, bool, bool, dict[str, Any]]:
-        # Get action of NPC
-        npc_observation = self.game.agent_observation(self.npc.id)
-        npc_action = self.npc.act(npc_observation)
-        actions = {self.agent_id: action, self.npc.id: npc_action}
+    def flatten_obs(self, obs: dict[str, Observation]) -> np.ndarray:
+        return np.stack(
+            [
+                obs[self.agent_ids[0]].as_tensor(),
+                obs[self.agent_ids[1]].as_tensor(),
+            ]
+        )
 
-        observations, infos = self.game.step(actions)
-
-        # From observations of all agents, pick only those relevant for the main agent
-        obs = observations[self.agent_id]
-        info = infos[self.agent_id]
-        reward = self.reward_fn(obs, action, self.game.is_done(), info)
-        terminated = self.game.is_done()
-        truncated = False
-        if self.truncation is not None:
-            truncated = self.game.time >= self.truncation
-
-        if hasattr(self, "replay"):
-            self.replay.add_state(deepcopy(self.game.channels))
-
-        if terminated or truncated:
-            if hasattr(self, "replay"):
-                self.replay.store()
-        return obs, reward, terminated, truncated, info
-
-    @staticmethod
-    def _default_reward(
-        observation: Observation,
-        action: Action,
-        done: bool,
-        info: Info,
-    ) -> Reward:
-        if done:
-            return 1 if info["is_winner"] else -1
-        return 0
+    def flatten_infos(
+        self, obs: dict[str, Observation], infos: dict[str, Any], rewards: dict[str, float]
+    ) -> dict[str, Any]:
+        return {
+            agent: [
+                rewards[agent],
+                infos[agent]["army"],
+                infos[agent]["land"],
+                infos[agent]["is_winner"],
+                compute_valid_move_mask(obs[agent]),
+            ]
+            for i, agent in enumerate(self.agent_ids)
+        }
 
     def close(self) -> None:
         if self.render_mode == "human":

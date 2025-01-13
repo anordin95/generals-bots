@@ -1,10 +1,5 @@
 from enum import Enum, IntEnum, StrEnum
 from importlib.resources import files
-from typing import Literal
-
-# Game Literals
-PASSABLE: Literal["."] = "."
-MOUNTAIN: Literal["#"] = "#"
 
 
 class Dimension(IntEnum):

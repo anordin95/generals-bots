@@ -1,6 +1,6 @@
 import numpy as np
 
-from generals.core.action import Action, compute_valid_action_mask
+from generals.core.action import Action, compute_valid_move_mask
 from generals.core.observation import Observation
 
 from .agent import Agent
@@ -10,11 +10,10 @@ class RandomAgent(Agent):
     def __init__(
         self,
         id: str = "Random",
-        color: tuple[int, int, int] = (242, 61, 106),
         split_prob: float = 0.25,
         idle_prob: float = 0.05,
     ):
-        super().__init__(id, color)
+        super().__init__(id)
 
         self.idle_probability = idle_prob
         self.split_probability = split_prob
@@ -24,19 +23,21 @@ class RandomAgent(Agent):
         Randomly selects a valid action.
         """
 
-        mask = compute_valid_action_mask(observation)
+        mask = compute_valid_move_mask(observation)
 
-        valid_actions = np.argwhere(mask == 1)
-        if len(valid_actions) == 0:  # No valid actions
-            return [1, 0, 0, 0, 0]
-        pass_turn = 0 if np.random.rand() > self.idle_probability else 1
-        split_army = 0 if np.random.rand() > self.split_probability else 1
+        # Skip the turn if there are no valid moves.
+        valid_moves = np.argwhere(mask == 1)
+        if len(valid_moves) == 0:
+            return Action(to_pass=True)
 
-        action_index = np.random.choice(len(valid_actions))
-        cell = valid_actions[action_index][:2]
-        direction = valid_actions[action_index][2]
+        to_pass = 1 if np.random.rand() <= self.idle_probability else 0
+        to_split = 1 if np.random.rand() <= self.split_probability else 0
 
-        action = [pass_turn, cell[0], cell[1], direction, split_army]
+        move_index = np.random.choice(len(valid_moves))
+        (row, col) = valid_moves[move_index][:2]
+        direction = valid_moves[move_index][2]
+
+        action = Action(to_pass, row, col, direction, to_split)
         return action
 
     def reset(self):
