@@ -108,6 +108,7 @@ class GridFactory:
         self.generals_locs = generals_locs
 
     def _get_largest_region_mask(self, is_passable: np.ndarray) -> np.ndarray:
+        
         # Pad with 0's around the border, otherwise scipy wraps boundaries, e.g.
         # the top-middle cell is connected to the bottom-middle cell.
         is_passable = np.pad(is_passable, 1, mode="constant", constant_values=0)
@@ -143,18 +144,34 @@ class GridFactory:
         grid_dims = (grid_height, grid_width)
 
         # Ensure we don't generate a split-map scenario: one where there are two large regions entirely
-        # seperated by mountains and cities.
+        # seperated by mountains and cities. And check if the generals locations were manually specified
+        # that they are both within the largest connected region.
         largest_region_proportion = 0.0
-        while largest_region_proportion <= 0.70:
+        are_generals_disconnected = True
+        while largest_region_proportion <= 0.70 or are_generals_disconnected:
             p_empty = 1 - self.p_mountain - self.p_city
             mountain_or_city = rng.choice([0, "m", "c"], size=grid_dims, p=[p_empty, self.p_mountain, self.p_city])
             mountains = mountain_or_city == "m"
             cities = mountain_or_city == "c"
             is_passable = ~mountains & ~cities
 
-            largest_region_size = self._get_largest_region_mask(is_passable).sum()
+            # Compute the proportion of the non-mountain tiles encompassed by the largest region.
+            largest_region_mask = self._get_largest_region_mask(is_passable)
+            largest_region_size = largest_region_mask.sum()
             largest_region_proportion = largest_region_size.sum() / is_passable.sum()
 
+            
+            if self.generals_locs is not None:
+                # If the generals locations were manually specified, check that they are both within 
+                # that largest region.
+                is_general_one_in_region = largest_region_mask[self.generals_locs[0]]
+                is_general_two_in_region = largest_region_mask[self.generals_locs[1]]
+                are_generals_disconnected = not (is_general_one_in_region and is_general_two_in_region)
+            else:
+                # The generals location generation logic ensures they will be connected, so no need to 
+                # re-do the grid layout.
+                are_generals_disconnected = False
+        
         generals_locs = self.generals_locs
         if generals_locs is None:
             generals_locs = self.generate_generals_locs(is_passable=(~mountains & ~cities), rng=rng)
